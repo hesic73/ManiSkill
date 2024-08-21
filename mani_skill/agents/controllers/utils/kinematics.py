@@ -124,19 +124,23 @@ class Kinematics:
     ):
         """Given a target pose, via inverse kinematics compute the target joint positions that will achieve the target pose"""
         if self.use_gpu_ik:
-            pk_tf = pk.Transform3d(
-                rot=quaternion_to_rpy(target_pose.q),
-                pos=target_pose.p,
-                device=self.device,
-            )
-            sol = self.ik_solver.solve(pk_tf)
-            if not sol.converged_any.all():
-                return None
-            converged = sol.converged  # (n, num_retries)
-            solultions = sol.solutions  # (n, num_retries, num_dofs)
-            converged_indices = converged.int().argmax(dim=1)  # (n,)
-            batch_indices = torch.arange(sol.solutions.shape[0], device=self.device)
-            return wrap_to_pi(solultions[batch_indices, converged_indices])
+            q0 = q0[:, self.active_ancestor_joint_idxs]
+            jacobian = self.pk_chain.jacobian(q0)
+            # code commented out below is the fast kinematics method
+            # jacobian = (
+            #     self.fast_kinematics_model.jacobian_mixed_frame_pytorch(
+            #         self.articulation.get_qpos()[:, self.active_ancestor_joint_idxs]
+            #     )
+            #     .view(-1, len(self.active_ancestor_joints), 6)
+            #     .permute(0, 2, 1)
+            # )
+            # jacobian = jacobian[:, :, self.qmask]
+            if pos_only:
+                jacobian = jacobian[:, 0:3]
+
+            # NOTE (stao): this method of IK is from https://mathweb.ucsd.edu/~sbuss/ResearchWeb/ikmethods/iksurvey.pdf by Samuel R. Buss
+            delta_joint_pos = torch.linalg.pinv(jacobian) @ action.unsqueeze(-1)
+            return q0 + delta_joint_pos.squeeze(-1)
         else:
             result, success, error = self.pmodel.compute_inverse_kinematics(
                 self.end_link_idx,
@@ -151,6 +155,21 @@ class Kinematics:
                 )
             else:
                 return None
+
+    def compute_ik_pytorch_kinematics(self, target_pose: Pose):
+        pk_tf = pk.Transform3d(
+            rot=quaternion_to_rpy(target_pose.q),
+            pos=target_pose.p,
+            device=self.device,
+        )
+        sol = self.ik_solver.solve(pk_tf)
+        if not sol.converged_any.all():
+            return None
+        converged = sol.converged  # (n, num_retries)
+        solultions = sol.solutions  # (n, num_retries, num_dofs)
+        converged_indices = converged.int().argmax(dim=1)  # (n,)
+        batch_indices = torch.arange(sol.solutions.shape[0], device=self.device)
+        return wrap_to_pi(solultions[batch_indices, converged_indices])
 
 
 def quaternion_to_rpy(quaternion: torch.Tensor) -> torch.Tensor:
