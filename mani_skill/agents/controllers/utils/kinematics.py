@@ -88,6 +88,28 @@ class Kinematics:
         ].create_pinocchio_model()
         self.qmask[self.active_joint_indices] = 1
 
+        with open(self.urdf_path, "r") as f:
+            urdf_str = f.read()
+
+        @contextmanager
+        def suppress_stdout_stderr():
+            """A context manager that redirects stdout and stderr to devnull"""
+            with open(devnull, "w") as fnull:
+                with redirect_stderr(fnull) as err, redirect_stdout(fnull) as out:
+                    yield (err, out)
+
+        with suppress_stdout_stderr():
+            self.pk_chain = pk.build_serial_chain_from_urdf(
+                urdf_str,
+                end_link_name=self.end_link.name,
+            ).to(device=self.device)
+            lim = torch.tensor(self.pk_chain.get_joint_limits(), device=self.device)
+            self.ik_solver = pk.PseudoInverseIK(
+                serial_chain=self.pk_chain,
+                num_retries=10,
+                joint_limits=lim.T,
+            )
+
     def _setup_gpu(self):
         """setup the kinematics solvers on the GPU"""
         self.use_gpu_ik = True
