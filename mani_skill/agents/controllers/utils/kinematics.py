@@ -180,7 +180,7 @@ class Kinematics:
 
     def compute_ik_pytorch_kinematics(self, target_pose: Pose):
         pk_tf = pk.Transform3d(
-            rot=quaternion_to_rpy(target_pose.q),
+            rot=target_pose.q,
             pos=target_pose.p,
             device=self.device,
         )
