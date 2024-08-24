@@ -71,28 +71,26 @@ class BaseEnv(gym.Env):
 
         enable_shadow (bool): whether to enable shadow for lights. Defaults to False.
 
-        sensor_configs (dict): configurations of sensors to override any environment defaults.
-            If the key is one of sensor names (e.g. a camera), the config value will be applied to the corresponding sensor.
-            Otherwise, the value will be applied to all sensors (but overridden by sensor-specific values). For possible configurations
-            see the documentation see :doc:`the sensors documentation </user_guide/tutorials/sensors/index>`.
+        sensor_configs (dict): configurations of sensors. See notes for more details.
 
-        human_render_camera_configs (dict): configurations of human rendering cameras to override any environment defaults. Similar usage as @sensor_configs.
+        human_render_camera_configs (dict): configurations of human rendering cameras. Similar usage as @sensor_configs.
 
-        viewer_camera_configs (dict): configurations of the viewer camera in the GUI to override any environment defaults. Similar usage as @sensor_configs.
+        viewer_camera_configs (dict): configurations of the viewer camera in the GUI. Similar usage as @sensor_configs.
 
         robot_uids (Union[str, BaseAgent, List[Union[str, BaseAgent]]]): List of robots to instantiate and control in the environment.
 
         sim_config (Union[SimConfig, dict]): Configurations for simulation if used that override the environment defaults. If given
-            a dictionary, it can just override specific attributes e.g. ``sim_config=dict(scene_config=dict(solver_iterations=25))``. If
+            a dictionary, it can just override specific attributes e.g. `sim_config=dict(scene_config=dict(solver_iterations=25))`. If
             passing in a SimConfig object, while typed, will override every attribute including the task defaults. Some environments
-            define their own recommended default sim configurations via the ``self._default_sim_config`` attribute that generally should not be
-            completely overriden.
+            define their own recommended default sim configurations via the `self._default_sim_config` attribute that generally should not be
+            completely overriden. For a full detail/explanation of what is in the sim config see the type hints / go to the source
+            https://github.com/haosulab/ManiSkill/blob/main/mani_skill/utils/structs/types.py
 
         reconfiguration_freq (int): How frequently to call reconfigure when environment is reset via `self.reset(...)`
             Generally for most users who are not building tasks this does not need to be changed. The default is 0, which means
             the environment reconfigures upon creation, and never again.
 
-        sim_backend (str): By default this is "auto". If sim_backend is "auto", then if ``num_envs == 1``, we use the CPU sim backend, otherwise
+        sim_backend (str): By default this is "auto". If sim_backend is "auto", then if num_envs == 1, we use the CPU sim backend, otherwise
             we use the GPU sim backend and automatically pick a GPU to use.
             Can also be "cpu" or "gpu" to force usage of a particular sim backend.
             To select a particular GPU to run the simulation on, you can pass "cuda:n" where n is the ID of the GPU,
@@ -105,6 +103,11 @@ class BaseEnv(gym.Env):
         parallel_in_single_scene (bool): By default this is False. If True, rendered images and the GUI will show all objects in one view.
             This is only really useful for generating cool videos showing all environments at once but it is not recommended
             otherwise as it slows down simulation and rendering.
+
+    Note:
+        `sensor_configs` is used to update environement-specific sensor configurations.
+        If the key is one of sensor names (e.g. a camera), the value will be applied to the corresponding sensor.
+        Otherwise, the value will be applied to all sensors (but overridden by sensor-specific values).
     """
 
     # fmt: off
@@ -119,15 +122,12 @@ class BaseEnv(gym.Env):
 
     metadata = {"render_modes": SUPPORTED_RENDER_MODES}
 
+    physx_system: Union[physx.PhysxCpuSystem, physx.PhysxGpuSystem] = None
+
     scene: ManiSkillScene = None
     """the main scene, which manages all sub scenes. In CPU simulation there is only one sub-scene"""
 
     agent: BaseAgent
-
-    action_space: gym.Space
-    """the batched action space of the environment, which is also the action space of the agent"""
-    single_action_space: gym.Space
-    """the unbatched action space of the environment"""
 
     _sensors: Dict[str, BaseSensor]
     """all sensors configured in this environment"""
@@ -309,35 +309,14 @@ class BaseEnv(gym.Env):
         """the initial raw state returned by env.get_state. Useful for reconstructing state dictionaries from flattened state vectors"""
 
         self.action_space = self.agent.action_space
-        """the batched action space of the environment, which is also the action space of the agent"""
         self.single_action_space = self.agent.single_action_space
-        """the unbatched action space of the environment"""
         self._orig_single_action_space = copy.deepcopy(self.single_action_space)
-        """the original unbatched action space of the environment"""
         # initialize the cached properties
         self.single_observation_space
         self.observation_space
 
     def update_obs_space(self, obs: torch.Tensor):
-        """A convenient function to auto generate observation spaces if you modify them.
-        Call this function if you modify the observations returned by env.step and env.reset via an observation wrapper.
-
-        The recommended way to use this is in a observation wrapper is as so
-
-        .. code-block:: python
-
-            import gymnasium as gym
-            from mani_skill.envs.sapien_env import BaseEnv
-            class YourObservationWrapper(gym.ObservationWrapper):
-                def __init__(self, env):
-                    super().__init__(env)
-                    self.base_env.update_obs_space(self.observation(self.base_env._init_raw_obs))
-                @property
-                def base_env(self) -> BaseEnv:
-                    return self.env.unwrapped
-                def observation(self, obs):
-                    # your code for transforming the observation
-        """
+        """call this function if you modify the observations returned by env.step and env.reset via an observation wrapper."""
         self._init_raw_obs = obs
         del self.single_observation_space
         del self.observation_space
@@ -345,13 +324,11 @@ class BaseEnv(gym.Env):
         self.observation_space
 
     @cached_property
-    def single_observation_space(self) -> gym.Space:
-        """the unbatched observation space of the environment"""
+    def single_observation_space(self):
         return gym_utils.convert_observation_to_space(common.to_numpy(self._init_raw_obs), unbatched=True)
 
     @cached_property
-    def observation_space(self) -> gym.Space:
-        """the batched observation space of the environment"""
+    def observation_space(self):
         return batch_space(self.single_observation_space, n=self.num_envs)
 
     @property
@@ -415,41 +392,34 @@ class BaseEnv(gym.Env):
         return CameraConfig(uid="viewer", pose=sapien.Pose([0, 0, 1]), width=1920, height=1080, shader_pack="default")
 
     @property
-    def sim_freq(self) -> int:
-        """The frequency (Hz) of the simulation loop"""
+    def sim_freq(self):
         return self._sim_freq
 
     @property
     def control_freq(self):
-        """The frequency (Hz) of the control loop"""
         return self._control_freq
 
     @property
     def sim_timestep(self):
-        """The timestep (dt) of the simulation loop"""
         return 1.0 / self._sim_freq
 
     @property
     def control_timestep(self):
-        """The timestep (dt) of the control loop"""
         return 1.0 / self._control_freq
 
     @property
-    def control_mode(self) -> str:
-        """The control mode of the agent"""
+    def control_mode(self):
         return self.agent.control_mode
 
     @property
-    def elapsed_steps(self) -> torch.Tensor:
-        """The number of steps that have elapsed in the environment"""
+    def elapsed_steps(self):
         return self._elapsed_steps
 
     # ---------------------------------------------------------------------------- #
     # Observation
     # ---------------------------------------------------------------------------- #
     @property
-    def obs_mode(self) -> str:
-        """The current observation mode. This affects the observation returned by env.get_obs()"""
+    def obs_mode(self):
         return self._obs_mode
 
     def get_obs(self, info: Optional[Dict] = None):
@@ -511,7 +481,7 @@ class BaseEnv(gym.Env):
             sensor.capture()
 
     def get_sensor_images(self) -> Dict[str, Dict[str, torch.Tensor]]:
-        """Get image (RGB) visualizations of what sensors currently sense. This function calls self._get_obs_sensor_data() internally which automatically hides objects and updates the render"""
+        """Get image (RGB) visualizations of what sensors currently sense"""
         return self.scene.get_sensor_images(self._get_obs_sensor_data())
 
     def get_sensor_params(self) -> Dict[str, Dict[str, torch.Tensor]]:
@@ -862,9 +832,7 @@ class BaseEnv(gym.Env):
 
     def step(self, action: Union[None, np.ndarray, torch.Tensor, Dict]):
         """
-        Take a step through the environment with an action. Actions are automatically clipped to the action space.
-
-        If ``action`` is None, the environment will proceed forward in time without sending any actions/control signals to the agent
+        Take a step through the environment with an action
         """
         action = self._step_action(action)
         self._elapsed_steps += 1
@@ -953,7 +921,7 @@ class BaseEnv(gym.Env):
         """
         return dict()
 
-    def get_info(self) -> dict:
+    def get_info(self):
         """
         Get info about the current environment state, include elapsed steps and evaluation information
         """
@@ -991,7 +959,7 @@ class BaseEnv(gym.Env):
         The function should be called in reset(). Called by `self._reconfigure`"""
         self._set_scene_config()
         if self._sim_device.is_cuda():
-            physx_system = physx.PhysxGpuSystem(device=self._sim_device)
+            self.physx_system = physx.PhysxGpuSystem(device=self._sim_device)
             # Create the scenes in a square grid
             sub_scenes = []
             scene_grid_length = int(np.ceil(np.sqrt(self.num_envs)))
@@ -1001,9 +969,9 @@ class BaseEnv(gym.Env):
                     scene_idx // scene_grid_length - scene_grid_length // 2,
                 )
                 scene = sapien.Scene(
-                    systems=[physx_system, sapien.render.RenderSystem(self._render_device)]
+                    systems=[self.physx_system, sapien.render.RenderSystem(self._render_device)]
                 )
-                physx_system.set_scene_offset(
+                self.physx_system.set_scene_offset(
                     scene,
                     [
                         scene_x * self.sim_config.spacing,
@@ -1013,9 +981,9 @@ class BaseEnv(gym.Env):
                 )
                 sub_scenes.append(scene)
         else:
-            physx_system = physx.PhysxCpuSystem()
+            self.physx_system = physx.PhysxCpuSystem()
             sub_scenes = [
-                sapien.Scene([physx_system, sapien.render.RenderSystem(self._render_device)])
+                sapien.Scene([self.physx_system, sapien.render.RenderSystem(self._render_device)])
             ]
         # create a "global" scene object that users can work with that is linked with all other scenes created
         self.scene = ManiSkillScene(
@@ -1024,7 +992,7 @@ class BaseEnv(gym.Env):
             device=self.device,
             parallel_in_single_scene=self._parallel_in_single_scene
         )
-        self.scene.px.timestep = 1.0 / self._sim_freq
+        self.physx_system.timestep = 1.0 / self._sim_freq
 
     def _clear(self):
         """Clear the simulation scene instance and other buffers.
@@ -1138,14 +1106,13 @@ class BaseEnv(gym.Env):
             )
 
     def render_human(self):
-        """render the environment by opening a GUI viewer. This also returns the viewer object. Any objects registered in the _hidden_objects list will be shown"""
         for obj in self._hidden_objects:
             obj.show_visual()
         if self._viewer is None:
             self._viewer = create_viewer(self._viewer_camera_config)
             self._setup_viewer()
         if physx.is_gpu_enabled() and self.scene._gpu_sim_initialized:
-            self.scene.px.sync_poses_gpu_to_cpu()
+            self.physx_system.sync_poses_gpu_to_cpu()
         self._viewer.render()
         for obj in self._hidden_objects:
             obj.hide_visual()
@@ -1154,12 +1121,12 @@ class BaseEnv(gym.Env):
     def render_rgb_array(self, camera_name: str = None):
         """Returns an RGB array / image of size (num_envs, H, W, 3) of the current state of the environment.
         This is captured by any of the registered human render cameras. If a camera_name is given, only data from that camera is returned.
-        Otherwise all camera data is captured and returned as a single batched image. Any objects registered in the _hidden_objects list will be shown"""
+        Otherwise all camera data is captured and returned as a single batched image"""
         for obj in self._hidden_objects:
             obj.show_visual()
         self.scene.update_render()
         images = []
-        render_images = self.scene.get_human_render_camera_images(camera_name)
+        render_images = self.scene.get_human_render_camera_images()
         for image in render_images.values():
             images.append(image)
         if len(images) == 0:
@@ -1172,8 +1139,7 @@ class BaseEnv(gym.Env):
 
     def render_sensors(self):
         """
-        Renders all sensors that the agent can use and see and displays them in a human readable image format.
-        Any objects registered in the _hidden_objects list will not be shown
+        Renders all sensors that the agent can use and see and displays them
         """
         images = []
         sensor_images = self.get_sensor_images()
@@ -1189,10 +1155,11 @@ class BaseEnv(gym.Env):
             obj.show_visual()
         self.scene.update_render()
         render_images = self.scene.get_human_render_camera_images()
-        # note that get_sensor_images function will update the render and hide objects itself
+
         sensor_images = self.get_sensor_images()
         for image in render_images.values():
-            images.append(image)
+            for img in image.values():
+                images.append(img)
         for image in sensor_images.values():
             for img in image.values():
                 images.append(img)
@@ -1200,13 +1167,11 @@ class BaseEnv(gym.Env):
 
     def render(self):
         """
-        Either opens a viewer if ``self.render_mode`` is "human", or returns an array that you can use to save videos.
+        Either opens a viewer if render_mode is "human", or returns an array that you can use to save videos.
 
-        If ``self.render_mode`` is "rgb_array", usually a higher quality image is rendered for the purpose of viewing only.
+        render_mode is "rgb_array", usually a higher quality image is rendered for the purpose of viewing only.
 
-        If ``self.render_mode`` is "sensors", all visual observations the agent can see is provided
-
-        If ``self.render_mode`` is "all", this is then a combination of "rgb_array" and "sensors"
+        if render_mode is "sensors", all visual observations the agent can see is provided
         """
         if self.render_mode is None:
             raise RuntimeError("render_mode is not set.")
@@ -1255,7 +1220,6 @@ class BaseEnv(gym.Env):
 
     # Printing metrics/info
     def print_sim_details(self):
-        """Debug tool to call to simply print a bunch of details about the running environment, including the task ID, number of environments, sim backend, etc."""
         sensor_settings_str = []
         for uid, cam in self._sensors.items():
             if isinstance(cam, Camera):
