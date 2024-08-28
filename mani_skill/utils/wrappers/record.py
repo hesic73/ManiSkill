@@ -37,6 +37,21 @@ def parse_env_info(env: gym.Env):
     else:
         # gym>=0.22
         env_kwargs = env.spec.kwargs
+
+    # added by hsc 2024-08-27
+    from omegaconf import ListConfig
+
+    def convert_listconfig_to_list(d):
+        if isinstance(d, dict):
+            return {k: convert_listconfig_to_list(v) for k, v in d.items()}
+        elif isinstance(d, list):
+            return [convert_listconfig_to_list(item) for item in d]
+        elif isinstance(d, ListConfig):
+            return list(d)
+        else:
+            return d
+
+    env_kwargs = convert_listconfig_to_list(env_kwargs)
     return dict(
         env_id=env.spec.id,
         env_kwargs=env_kwargs,
@@ -364,6 +379,7 @@ class RecordEpisode(gym.Wrapper):
                     (
                         1,
                         self.num_envs,
+                        1,  # added by hsc 2024-08-27
                     ),
                     dtype=float,
                 ),
@@ -439,7 +455,6 @@ class RecordEpisode(gym.Wrapper):
                 self._trajectory_buffer.observation,
                 common.to_numpy(common.batch(obs)),
             )
-
             self._trajectory_buffer.action = common.append_dict_array(
                 self._trajectory_buffer.action,
                 common.to_numpy(common.batch(action)),
