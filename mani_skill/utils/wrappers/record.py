@@ -39,7 +39,7 @@ def parse_env_info(env: gym.Env):
         env_kwargs = env.spec.kwargs
 
     # added by hsc 2024-08-27
-    from omegaconf import ListConfig
+    from omegaconf import DictConfig, ListConfig
 
     def convert_listconfig_to_list(d):
         if isinstance(d, dict):
@@ -48,6 +48,8 @@ def parse_env_info(env: gym.Env):
             return [convert_listconfig_to_list(item) for item in d]
         elif isinstance(d, ListConfig):
             return list(d)
+        elif isinstance(d, DictConfig):
+            return dict(d)
         else:
             return d
 
