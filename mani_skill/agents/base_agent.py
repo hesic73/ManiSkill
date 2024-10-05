@@ -160,7 +160,7 @@ class BaseAgent:
 
         if not os.path.exists(asset_path):
             print(f"Robot {self.uid} definition file not found at {asset_path}")
-            if len(assets.DATA_GROUPS[self.uid]) > 0:
+            if self.uid in assets.DATA_GROUPS or len(assets.DATA_GROUPS[self.uid]) > 0:
                 response = download_asset.prompt_yes_no(
                     f"Robot {self.uid} has assets available for download. Would you like to download them now?"
                 )
@@ -175,13 +175,15 @@ class BaseAgent:
                     print(f"Exiting as assets for robot {self.uid} are not downloaded")
                     exit()
             else:
-                print(f"Exiting as assets for robot {self.uid} are not found")
+                print(
+                    f"Exiting as assets for robot {self.uid} are not found. Check that this agent is properly registered with the appropriate download asset ids"
+                )
                 exit()
         self.robot: Articulation = loader.load(asset_path)
         assert self.robot is not None, f"Fail to load URDF/MJCF from {asset_path}"
 
-        # Cache robot link ids
-        self.robot_link_ids = [link.name for link in self.robot.get_links()]
+        # Cache robot link names
+        self.robot_link_names = [link.name for link in self.robot.get_links()]
 
     def _after_loading_articulation(self):
         """After loading articulation and before setting up controller. Not recommended, but is useful for when creating
@@ -323,13 +325,15 @@ class BaseAgent:
     # -------------------------------------------------------------------------- #
     def reset(self, init_qpos=None):
         """
-        Reset the robot to a rest position or a given q-position
+        Reset the robot to a clean state with zero velocity and forces.
+
+        Args:
+            init_qpos (torch.Tensor): The initial qpos to set the robot to. If None, the robot's qpos is not changed.
         """
         if init_qpos is not None:
             self.robot.set_qpos(init_qpos)
         self.robot.set_qvel(torch.zeros(self.robot.max_dof, device=self.device))
         self.robot.set_qf(torch.zeros(self.robot.max_dof, device=self.device))
-        self.controller.reset()
 
     # -------------------------------------------------------------------------- #
     # Optional per-agent APIs, implemented depending on agent affordances

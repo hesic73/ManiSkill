@@ -138,7 +138,7 @@ def to_tensor(
 
     """
     if isinstance(array, (dict)):
-        return {k: to_tensor(v) for k, v in array.items()}
+        return {k: to_tensor(v, device=device) for k, v in array.items()}
     if physx.is_gpu_enabled():
         if isinstance(array, np.ndarray):
             if array.dtype == np.uint16:
