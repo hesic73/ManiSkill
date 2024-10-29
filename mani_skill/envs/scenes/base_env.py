@@ -83,16 +83,25 @@ class SceneManipulationEnv(BaseEnv):
         )
 
     def reset(self, seed=None, options=None):
-        self._set_episode_rng(seed)
         if options is None:
             options = dict(reconfigure=False)
+        self._set_episode_rng(seed, options.get("env_idx", torch.arange(self.num_envs)))
         if "reconfigure" in options and options["reconfigure"]:
-            self.build_config_idxs = options.pop(
+            self.build_config_idxs = options.get(
                 "build_config_idxs", self.build_config_idxs
             )
-            self.init_config_idxs = options.pop(
+            self.init_config_idxs = options.get("init_config_idxs", None)
+        else:
+            assert (
+                "build_config_idxs" not in options
+            ), "options dict cannot contain build_config_idxs without reconfigure=True"
+            self.init_config_idxs = options.get(
                 "init_config_idxs", self.init_config_idxs
             )
+        if isinstance(self.build_config_idxs, int):
+            self.build_config_idxs = [self.build_config_idxs]
+        if isinstance(self.init_config_idxs, int):
+            self.init_config_idxs = [self.init_config_idxs]
         return super().reset(seed, options)
 
     def _load_lighting(self, options: dict):

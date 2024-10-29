@@ -71,7 +71,7 @@ class OpenCabinetDrawerEnv(BaseEnv):
     @property
     def _default_sim_config(self):
         return SimConfig(
-            spacing=10,
+            spacing=5,
             gpu_memory_config=GPUMemoryConfig(
                 max_rigid_contact_count=2**21, max_rigid_patch_count=2**19
             ),
@@ -87,6 +87,9 @@ class OpenCabinetDrawerEnv(BaseEnv):
         return CameraConfig(
             "render_camera", pose=pose, width=512, height=512, fov=1, near=0.01, far=100
         )
+
+    def _load_agent(self, options: dict):
+        super()._load_agent(options, sapien.Pose(p=[1, 0, 0]))
 
     def _load_scene(self, options: dict):
         self.ground = build_ground(self.scene)
@@ -107,12 +110,8 @@ class OpenCabinetDrawerEnv(BaseEnv):
     def _load_cabinets(self, joint_types: List[str]):
         # we sample random cabinet model_ids with numpy as numpy is always deterministic based on seed, regardless of
         # GPU/CPU simulation backends. This is useful for replaying demonstrations.
-        rand_idx = self._episode_rng.permutation(np.arange(0, len(self.all_model_ids)))
-        model_ids = self.all_model_ids[rand_idx]
-        model_ids = np.concatenate(
-            [model_ids] * np.ceil(self.num_envs / len(self.all_model_ids)).astype(int)
-        )[: self.num_envs]
-        link_ids = self._episode_rng.randint(0, 2**31, size=len(model_ids))
+        model_ids = self._batched_episode_rng.choice(self.all_model_ids)
+        link_ids = self._batched_episode_rng.randint(0, 2**31)
 
         self._cabinets = []
         handle_links: List[List[Link]] = []
@@ -125,6 +124,7 @@ class OpenCabinetDrawerEnv(BaseEnv):
                 self.scene, f"partnet-mobility:{model_id}"
             )
             cabinet_builder.set_scene_idxs(scene_idxs=[i])
+            cabinet_builder.initial_pose = sapien.Pose(p=[0, 0, 0], q=[1, 0, 0, 0])
             cabinet = cabinet_builder.build(name=f"{model_id}-{i}")
 
             # this disables self collisions by setting the group 2 bit at CABINET_COLLISION_BIT all the same
@@ -177,6 +177,7 @@ class OpenCabinetDrawerEnv(BaseEnv):
             name="handle_link_goal",
             body_type="kinematic",
             add_collision=False,
+            initial_pose=sapien.Pose(p=[0, 0, 0], q=[1, 0, 0, 0]),
         )
 
     def _after_reconfigure(self, options):
@@ -270,17 +271,26 @@ class OpenCabinetDrawerEnv(BaseEnv):
                 Pose.create_from_pq(p=self.handle_link_positions(env_idx))
             )
 
+    def _after_control_step(self):
+        # after each control step, we update the goal position of the handle link
+        # for GPU sim we need to update the kinematics data to get latest pose information for up to date link poses
+        # and fetch it, followed by an apply call to ensure the GPU sim is up to date
+        if physx.is_gpu_enabled():
+            self.scene.px.gpu_update_articulation_kinematics()
+            self.scene._gpu_fetch_all()
+        self.handle_link_goal.set_pose(
+            Pose.create_from_pq(p=self.handle_link_positions())
+        )
+        if physx.is_gpu_enabled():
+            self.scene._gpu_apply_all()
+
     def evaluate(self):
         # even though self.handle_link is a different link across different articulations
         # we can still fetch a joint that represents the parent joint of all those links
         # and easily get the qpos value.
         open_enough = self.handle_link.joint.qpos >= self.target_qpos
         handle_link_pos = self.handle_link_positions()
-        # TODO (stao): setting the pose of the visual sphere here seems to cause mayhem with cabinet qpos
-        # self.handle_link_goal.set_pose(Pose.create_from_pq(p=self.handle_link_positions()))
-        # self.scene._gpu_apply_all()
-        # self.scene._gpu_fetch_all()
-        # update the goal sphere to its new position
+
         link_is_static = (
             torch.linalg.norm(self.handle_link.angular_velocity, axis=1) <= 1
         ) & (torch.linalg.norm(self.handle_link.linear_velocity, axis=1) <= 0.1)
