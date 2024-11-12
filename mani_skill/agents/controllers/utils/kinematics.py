@@ -215,7 +215,7 @@ class Kinematics:
             pos=target_pose.p,
             device=self.device,
         )
-        if initial_qpos is None:
+        if initial_qpos is not None:
             initial_qpos = initial_qpos[:, self.active_ancestor_joint_idxs]
             self.pik.initial_config = initial_qpos
         sol = self.pik.solve(pk_tf)
