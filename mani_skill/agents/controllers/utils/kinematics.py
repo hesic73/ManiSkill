@@ -3,7 +3,7 @@ Code for kinematics utilities on CPU/GPU
 """
 from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from os import devnull
-from typing import List, Optional
+from typing import List
 
 try:
     import pytorch_kinematics as pk
@@ -207,17 +207,12 @@ class Kinematics:
             else:
                 return None
 
-    def compute_ik_pytorch_kinematics(
-        self, target_pose: Pose, initial_qpos: Optional[torch.Tensor] = None
-    ):
+    def compute_ik_pytorch_kinematics(self, target_pose: Pose):
         pk_tf = pk.Transform3d(
             rot=target_pose.q,
             pos=target_pose.p,
             device=self.device,
         )
-        if initial_qpos is not None:
-            initial_qpos = initial_qpos[:, self.active_ancestor_joint_idxs]
-            self.pik.initial_config = initial_qpos
         sol = self.pik.solve(pk_tf)
         if not sol.converged_any.all():
             return None
