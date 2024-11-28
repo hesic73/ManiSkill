@@ -216,11 +216,11 @@ class ActorBuilder(SAPIENActorBuilder):
 
         if self.initial_pose is None:
             logger.warn(
-                f"No initial pose set for actor builder of {self.name}, setting to default pose q=[1,0,0,0], p=[0,0,0]."
+                f"No initial pose set for actor builder of {self.name}, setting to default pose q=[1,0,0,0], p=[0,0,0]. Not setting reasonable initial poses may slow down simulation, see https://github.com/haosulab/ManiSkill/issues/421."
             )
             self.initial_pose = Pose.create(sapien.Pose())
         else:
-            self.initial_pose = Pose.create(self.initial_pose)
+            self.initial_pose = Pose.create(self.initial_pose, device=self.scene.device)
 
         initial_pose_b = self.initial_pose.raw_pose.shape[0]
         assert initial_pose_b == 1 or initial_pose_b == num_actors
@@ -251,7 +251,7 @@ class ActorBuilder(SAPIENActorBuilder):
         if (
             self.physx_body_type == "static"
             and initial_pose_b == 1
-            and physx.is_gpu_enabled()
+            and self.scene.gpu_sim_enabled
         ):
             actor.initial_pose = Pose.create(
                 self.initial_pose.raw_pose.repeat(num_actors, 1)
@@ -259,6 +259,7 @@ class ActorBuilder(SAPIENActorBuilder):
         else:
             actor.initial_pose = self.initial_pose
         self.scene.actors[self.name] = actor
+        self.scene.add_to_state_dict_registry(actor)
         return actor
 
     """

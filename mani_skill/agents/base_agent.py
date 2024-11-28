@@ -277,7 +277,7 @@ class BaseAgent:
         """
         Set the agent's action which is to be executed in the next environment timestep
         """
-        if not physx.is_gpu_enabled():
+        if not self.scene.gpu_sim_enabled:
             if np.isnan(action).any():
                 raise ValueError("Action cannot be NaN. Environment received:", action)
         self.controller.set_action(action)
